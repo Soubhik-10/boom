@@ -108,7 +108,7 @@ impl JwtSigner {
 }
 
 fn decode_hex(input: &str) -> Result<Vec<u8>> {
-    if input.len() % 2 != 0 {
+    if !input.len().is_multiple_of(2) {
         return Err(anyhow!("JWT secret hex has odd length"));
     }
     let mut out = Vec::with_capacity(input.len() / 2);

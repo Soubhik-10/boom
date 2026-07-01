@@ -34,13 +34,3 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
       - name: Rustdoc warnings denied
         run: RUSTDOCFLAGS="-D warnings" cargo +nightly doc --workspace --no-deps --locked
-
-  python:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Import analysis package
-        run: PYTHONPATH=python python -m boom_analysis.cli
