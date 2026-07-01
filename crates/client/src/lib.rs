@@ -113,9 +113,11 @@ fn decode_hex(input: &str) -> Result<Vec<u8>> {
     }
     let mut out = Vec::with_capacity(input.len() / 2);
     let bytes = input.as_bytes();
-    for chunk in bytes.chunks_exact(2) {
-        let hi = from_hex(chunk[0])?;
-        let lo = from_hex(chunk[1])?;
+    let (chunks, remainder) = bytes.as_chunks::<2>();
+    debug_assert!(remainder.is_empty());
+    for [hi, lo] in chunks {
+        let hi = from_hex(*hi)?;
+        let lo = from_hex(*lo)?;
         out.push((hi << 4) | lo);
     }
     Ok(out)
