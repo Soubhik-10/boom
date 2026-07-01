@@ -1,0 +1,21 @@
+﻿[targets.local]
+rpc = "http://localhost:8545"
+label = "local"
+
+[bench]
+duration = "30s"
+warmup = "5s"
+concurrency = 64
+timeout = "10s"
+batch_size = 1
+seed = 1
+
+[json_rpc.eth_blockNumber]
+weight = 20
+params = []
+compare = "drift"
+
+[json_rpc.eth_getBlockByNumber]
+weight = 10
+params = ["latest", false]
+compare = "normalized"

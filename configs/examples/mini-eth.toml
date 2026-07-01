@@ -1,0 +1,35 @@
+[targets.local]
+rpc = "http://localhost:8545"
+label = "Local Ethereum RPC"
+
+[bench]
+duration = "10s"
+warmup = "1s"
+concurrency = 8
+timeout = "10s"
+batch_size = 1
+
+[json_rpc.web3_clientVersion]
+weight = 1
+params = []
+readonly = true
+
+[json_rpc.eth_chainId]
+weight = 2
+params = []
+readonly = true
+
+[json_rpc.eth_blockNumber]
+weight = 4
+params = []
+readonly = true
+
+[json_rpc.eth_getBlockByNumber]
+weight = 2
+params = ["$latest_block", false]
+readonly = true
+
+[json_rpc.eth_feeHistory]
+weight = 1
+params = [4, "latest", [25, 50, 75]]
+readonly = true

@@ -1,0 +1,17 @@
+﻿too-large-for-stack = 128
+allow-dbg-in-tests = true
+doc-valid-idents = [
+    "API",
+    "Engine API",
+    "Ethereum",
+    "HTTP",
+    "JSON-RPC",
+    "JWT",
+    "REST",
+    "RPC",
+    "SSZ",
+    "WebSocket",
+    "KiB",
+    "MiB",
+    "GiB",
+]

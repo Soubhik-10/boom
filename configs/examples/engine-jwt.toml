@@ -1,0 +1,14 @@
+﻿[targets.local_engine]
+engine = "http://localhost:8551"
+jwt = "./jwt.hex"
+label = "local-engine"
+
+[bench]
+duration = "30s"
+concurrency = 32
+timeout = "10s"
+
+[json_rpc.engine_exchangeCapabilities]
+weight = 10
+params = [[]]
+readonly = true

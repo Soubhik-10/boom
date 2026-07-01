@@ -1,0 +1,81 @@
+﻿# Execution API PR #793 REST/SSZ endpoint map.
+# These entries are documentation/config seeds for future REST benchmark profiles.
+# Binary SSZ body files must be generated from a live devnet or fixtures.
+
+[targets.local_engine_ssz]
+engine_rest = "http://localhost:8551"
+jwt = "./jwt.hex"
+label = "local-engine-rest-ssz"
+
+[engine_ssz.capabilities]
+method = "GET"
+path = "/capabilities"
+accept = "application/json"
+readonly = true
+
+[engine_ssz.identity]
+method = "GET"
+path = "/identity"
+accept = "application/json"
+readonly = true
+
+[engine_ssz.new_payload]
+method = "POST"
+path = "/{fork}/payloads"
+content_type = "application/octet-stream"
+body = "fixtures/new-payload.ssz"
+readonly = false
+
+[engine_ssz.forkchoice]
+method = "POST"
+path = "/{fork}/forkchoice"
+content_type = "application/octet-stream"
+body = "fixtures/forkchoice.ssz"
+readonly = false
+
+[engine_ssz.get_payload]
+method = "GET"
+path = "/{fork}/payloads/{payload_id}"
+accept = "application/octet-stream"
+readonly = true
+
+[engine_ssz.bodies_by_hash]
+method = "POST"
+path = "/{fork}/bodies/hash"
+content_type = "application/octet-stream"
+body = "fixtures/body-hashes.ssz"
+readonly = true
+
+[engine_ssz.bodies_by_range]
+method = "GET"
+path = "/{fork}/bodies?from={from}&count={count}"
+accept = "application/octet-stream"
+readonly = true
+
+[engine_ssz.blobs_v1]
+method = "POST"
+path = "/blobs/v1"
+content_type = "application/octet-stream"
+body = "fixtures/blob-identifiers.ssz"
+readonly = true
+
+[engine_ssz.blobs_v2]
+method = "POST"
+path = "/blobs/v2"
+content_type = "application/octet-stream"
+body = "fixtures/blob-identifiers.ssz"
+readonly = true
+
+[engine_ssz.blobs_v3]
+method = "POST"
+path = "/blobs/v3"
+content_type = "application/octet-stream"
+body = "fixtures/blob-identifiers.ssz"
+readonly = true
+
+[engine_ssz.blobs_v4]
+method = "POST"
+path = "/blobs/v4"
+content_type = "application/octet-stream"
+body = "fixtures/blob-cell-range.ssz"
+readonly = true

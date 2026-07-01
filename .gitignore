@@ -1,0 +1,9 @@
+﻿/target/
+/runs/
+*.log
+.env
+jwt.hex
+*.jwt
+*.secret
+__pycache__/
+*.pyc

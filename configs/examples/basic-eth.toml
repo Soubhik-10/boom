@@ -1,0 +1,105 @@
+﻿[targets.local]
+rpc = "http://localhost:8545"
+label = "local"
+
+[bench]
+duration = "30s"
+warmup = "5s"
+concurrency = 64
+timeout = "10s"
+batch_size = 1
+seed = 1
+
+[json_rpc.web3_clientVersion]
+weight = 1
+params = []
+
+[json_rpc.net_version]
+weight = 1
+params = []
+
+[json_rpc.eth_chainId]
+weight = 4
+params = []
+
+[json_rpc.eth_blockNumber]
+weight = 10
+params = []
+
+[json_rpc.eth_syncing]
+weight = 1
+params = []
+
+[json_rpc.eth_gasPrice]
+weight = 3
+params = []
+
+[json_rpc.eth_maxPriorityFeePerGas]
+weight = 2
+params = []
+
+[json_rpc.eth_feeHistory]
+weight = 2
+params = [4, "latest", [25, 50, 75]]
+
+[json_rpc.eth_getBlockByNumber]
+weight = 8
+params = ["$latest_block", false]
+
+[json_rpc.eth_getBlockByHash]
+weight = 4
+params = ["$block_hash", false]
+
+[json_rpc.eth_getBlockTransactionCountByNumber]
+weight = 2
+params = ["$latest_block"]
+
+[json_rpc.eth_getBlockTransactionCountByHash]
+weight = 2
+params = ["$block_hash"]
+
+[json_rpc.eth_getTransactionByHash]
+weight = 6
+params = ["$tx_hash"]
+
+[json_rpc.eth_getTransactionReceipt]
+weight = 6
+params = ["$tx_hash"]
+
+[json_rpc.eth_getBalance]
+weight = 5
+params = ["$address", "latest"]
+
+[json_rpc.eth_getTransactionCount]
+weight = 3
+params = ["$address", "latest"]
+
+[json_rpc.eth_getCode]
+weight = 3
+params = ["$address", "latest"]
+
+[json_rpc.eth_getStorageAt]
+weight = 2
+params = ["$address", "0x0", "latest"]
+
+[json_rpc.eth_call]
+weight = 4
+params = [{ to = "$call_to", data = "0x" }, "latest"]
+
+[json_rpc.eth_estimateGas]
+weight = 2
+params = [{ to = "$call_to", data = "0x" }]
+
+[json_rpc.eth_getLogs]
+weight = 2
+params = [{ fromBlock = "$latest_block", toBlock = "$latest_block" }]
+
+[json_rpc.debug_traceTransaction]
+weight = 1
+params = ["$tx_hash", { tracer = "callTracer", timeout = "10s" }]
+
+# Enable only on nodes that support the exact eth_simulate variant you want.
+# Different clients currently expose different shapes/names for simulation APIs.
+[json_rpc.eth_simulateV1]
+weight = 0
+params = [{ blockStateCalls = [{ calls = [{ to = "$call_to", data = "0x" }] }] }, "latest"]
