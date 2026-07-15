@@ -18,6 +18,8 @@ struct ErrorSample {
     kind: String,
     detail: String,
     latency_ms: u128,
+    #[serde(default)]
+    latency_ns: u128,
 }
 
 pub async fn write_report(run: impl AsRef<Path>, out: Option<String>) -> Result<ReportArtifacts> {
@@ -76,11 +78,12 @@ fn read_error_samples(path: &Path) -> Result<Vec<ErrorSample>> {
         return Ok(Vec::new());
     }
     let raw = fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-    raw.lines()
+    Ok(raw
+        .lines()
         .filter(|line| !line.trim().is_empty())
         .take(200)
-        .map(|line| serde_json::from_str(line).context("parsing errors.jsonl line"))
-        .collect()
+        .filter_map(|line| serde_json::from_str(line).ok())
+        .collect())
 }
 
 pub fn render_markdown(summary: &BenchSummary) -> String {
@@ -93,9 +96,23 @@ pub fn render_markdown(summary: &BenchSummary) -> String {
     out.push_str(&format!("- timeouts: {}\n", summary.timeouts));
     out.push_str(&format!("- rps: {:.2}\n", summary.requests_per_second));
     out.push_str(&format!(
-        "- p50/p95/p99: {}/{}/{} ms\n\n",
-        summary.latency.p50_ms, summary.latency.p95_ms, summary.latency.p99_ms
+        "- p50/p95/p99: {}/{}/{}\n",
+        format_latency(summary.latency.p50_ns, summary.latency.p50_ms),
+        format_latency(summary.latency.p95_ns, summary.latency.p95_ms),
+        format_latency(summary.latency.p99_ns, summary.latency.p99_ms),
     ));
+    if let Some(target_rps) = summary.requested_rps {
+        out.push_str(&format!(
+            "- target delivery: {:.2}% ({:.2} requested RPS, {} dropped)\n",
+            summary.achieved_rate_ratio.unwrap_or(0.0) * 100.0,
+            target_rps,
+            summary.dropped_requests,
+        ));
+    }
+    if !summary.skipped_methods.is_empty() {
+        out.push_str(&format!("- skipped methods: {}\n", summary.skipped_methods.join(", ")));
+    }
+    out.push('\n');
     out.push_str("| method | requests | ok | errors | success | p50 | p95 | p99 |\n");
     out.push_str("|---|---:|---:|---:|---:|---:|---:|---:|\n");
     for (method, m) in method_rows(summary) {
@@ -106,9 +123,9 @@ pub fn render_markdown(summary: &BenchSummary) -> String {
             m.successes,
             m.errors,
             percent(m.successes, m.requests),
-            m.p50_ms,
-            m.p95_ms,
-            m.p99_ms
+            format_latency(m.p50_ns, m.p50_ms),
+            format_latency(m.p95_ns, m.p95_ms),
+            format_latency(m.p99_ns, m.p99_ms),
         ));
     }
     out
@@ -127,25 +144,40 @@ pub fn render_terminal_summary(summary: &BenchSummary) -> String {
     ));
     out.push_str(&format!("throughput: {:.2} req/s\n", summary.requests_per_second));
     out.push_str(&format!(
-        "latency: min {} ms | p50 {} ms | p95 {} ms | p99 {} ms | max {} ms\n",
-        summary.latency.min_ms,
-        summary.latency.p50_ms,
-        summary.latency.p95_ms,
-        summary.latency.p99_ms,
-        summary.latency.max_ms
+        "latency: min {} | p50 {} | p95 {} | p99 {} | max {}\n",
+        format_latency(summary.latency.min_ns, summary.latency.min_ms),
+        format_latency(summary.latency.p50_ns, summary.latency.p50_ms),
+        format_latency(summary.latency.p95_ns, summary.latency.p95_ms),
+        format_latency(summary.latency.p99_ns, summary.latency.p99_ms),
+        format_latency(summary.latency.max_ns, summary.latency.max_ms),
     ));
     out.push_str(&format!(
         "errors: rpc {} | transport {} | timeout {}\n",
         summary.rpc_errors, summary.transport_errors, summary.timeouts
     ));
+    if let Some(requested_rps) = summary.requested_rps {
+        out.push_str(&format!(
+            "load delivery: {:.2}% of {:.2} req/s | offered {} | dropped {}\n",
+            summary.achieved_rate_ratio.unwrap_or(0.0) * 100.0,
+            requested_rps,
+            summary.offered_requests,
+            summary.dropped_requests,
+        ));
+    }
+    if !summary.skipped_methods.is_empty() {
+        out.push_str(&format!("skipped methods: {}\n", summary.skipped_methods.join(", ")));
+    }
 
     let slow = slowest_methods(summary, 5);
     if !slow.is_empty() {
         out.push_str("\nslowest methods by p95\n");
         for (method, m) in &slow {
             out.push_str(&format!(
-                "  {:32} p50 {:>5} ms  p95 {:>5} ms  p99 {:>5} ms\n",
-                method, m.p50_ms, m.p95_ms, m.p99_ms
+                "  {:32} p50 {:>10}  p95 {:>10}  p99 {:>10}\n",
+                method,
+                format_latency(m.p50_ns, m.p50_ms),
+                format_latency(m.p95_ns, m.p95_ms),
+                format_latency(m.p99_ns, m.p99_ms),
             ));
         }
     }
@@ -170,6 +202,7 @@ pub fn render_terminal_summary(summary: &BenchSummary) -> String {
 pub fn render_openmetrics(summary: &BenchSummary) -> String {
     let mut out = String::new();
     let target = label_value(&summary.target);
+    out.push_str("# HELP boom_requests_total Completed logical JSON-RPC requests in the run.\n");
     out.push_str("# TYPE boom_requests_total counter\n");
     out.push_str(&format!(
         "boom_requests_total{{target=\"{target}\",status=\"success\"}} {}\n",
@@ -187,24 +220,60 @@ pub fn render_openmetrics(summary: &BenchSummary) -> String {
         "boom_requests_total{{target=\"{target}\",status=\"timeout\"}} {}\n",
         summary.timeouts
     ));
+    out.push_str("# HELP boom_offered_requests Total logical requests offered by the scheduler.\n");
+    out.push_str("# TYPE boom_offered_requests gauge\n");
+    out.push_str(&format!(
+        "boom_offered_requests{{target=\"{target}\"}} {}\n",
+        summary.offered_requests
+    ));
+    out.push_str("# HELP boom_dropped_requests Logical requests dropped because the concurrency limit was saturated.\n");
+    out.push_str("# TYPE boom_dropped_requests gauge\n");
+    out.push_str(&format!(
+        "boom_dropped_requests{{target=\"{target}\"}} {}\n",
+        summary.dropped_requests
+    ));
+    if let Some(ratio) = summary.achieved_rate_ratio {
+        out.push_str("# HELP boom_achieved_rate_ratio Observed logical RPS divided by requested logical RPS.\n");
+        out.push_str("# TYPE boom_achieved_rate_ratio gauge\n");
+        out.push_str(&format!("boom_achieved_rate_ratio{{target=\"{target}\"}} {ratio:.9}\n"));
+    }
+    out.push_str(
+        "# HELP boom_requests_per_second Completed logical requests per requested test second.\n",
+    );
     out.push_str("# TYPE boom_requests_per_second gauge\n");
     out.push_str(&format!(
         "boom_requests_per_second{{target=\"{target}\"}} {:.6}\n",
         summary.requests_per_second
     ));
-    out.push_str("# TYPE boom_latency_ms gauge\n");
-    for (quantile, value) in [
-        ("0.50", summary.latency.p50_ms),
-        ("0.90", summary.latency.p90_ms),
-        ("0.95", summary.latency.p95_ms),
-        ("0.99", summary.latency.p99_ms),
+    out.push_str("# HELP boom_latency_seconds End-to-end logical request latency by quantile.\n");
+    out.push_str("# TYPE boom_latency_seconds gauge\n");
+    for (quantile, value_ns) in [
+        ("0.50", summary.latency.p50_ns),
+        ("0.90", summary.latency.p90_ns),
+        ("0.95", summary.latency.p95_ns),
+        ("0.99", summary.latency.p99_ns),
     ] {
         out.push_str(&format!(
-            "boom_latency_ms{{target=\"{target}\",quantile=\"{quantile}\"}} {value}\n"
+            "boom_latency_seconds{{target=\"{target}\",quantile=\"{quantile}\"}} {:.9}\n",
+            effective_ns(
+                value_ns,
+                match quantile {
+                    "0.50" => summary.latency.p50_ms,
+                    "0.90" => summary.latency.p90_ms,
+                    "0.95" => summary.latency.p95_ms,
+                    _ => summary.latency.p99_ms,
+                }
+            ) as f64 /
+                1_000_000_000.0,
         ));
     }
+    append_histogram(&mut out, summary, &target);
+    out.push_str(
+        "# HELP boom_method_requests_total Completed logical requests by method and status.\n",
+    );
     out.push_str("# TYPE boom_method_requests_total counter\n");
-    out.push_str("# TYPE boom_method_latency_ms gauge\n");
+    out.push_str("# HELP boom_method_latency_seconds End-to-end latency by method and quantile.\n");
+    out.push_str("# TYPE boom_method_latency_seconds gauge\n");
     for (method, metrics) in &summary.methods {
         let method = label_value(method);
         out.push_str(&format!(
@@ -215,19 +284,59 @@ pub fn render_openmetrics(summary: &BenchSummary) -> String {
             "boom_method_requests_total{{target=\"{target}\",method=\"{method}\",status=\"error\"}} {}\n",
             metrics.errors
         ));
-        for (quantile, value) in [
-            ("0.50", metrics.p50_ms),
-            ("0.90", metrics.p90_ms),
-            ("0.95", metrics.p95_ms),
-            ("0.99", metrics.p99_ms),
+        for (quantile, value_ns) in [
+            ("0.50", metrics.p50_ns),
+            ("0.90", metrics.p90_ns),
+            ("0.95", metrics.p95_ns),
+            ("0.99", metrics.p99_ns),
         ] {
             out.push_str(&format!(
-                "boom_method_latency_ms{{target=\"{target}\",method=\"{method}\",quantile=\"{quantile}\"}} {value}\n"
+                "boom_method_latency_seconds{{target=\"{target}\",method=\"{method}\",quantile=\"{quantile}\"}} {:.9}\n",
+                effective_ns(value_ns, match quantile {
+                    "0.50" => metrics.p50_ms,
+                    "0.90" => metrics.p90_ms,
+                    "0.95" => metrics.p95_ms,
+                    _ => metrics.p99_ms,
+                }) as f64 / 1_000_000_000.0,
             ));
         }
     }
     out.push_str("# EOF\n");
     out
+}
+
+fn append_histogram(out: &mut String, summary: &BenchSummary, target: &str) {
+    out.push_str("# HELP boom_latency_histogram_seconds Coarse cumulative latency histogram.\n");
+    out.push_str("# TYPE boom_latency_histogram_seconds histogram\n");
+    let histogram = &summary.histogram;
+    let mut cumulative = 0_u64;
+    for (le, count) in [
+        ("0.005", histogram.le_5_ms),
+        ("0.010", histogram.le_10_ms),
+        ("0.025", histogram.le_25_ms),
+        ("0.050", histogram.le_50_ms),
+        ("0.100", histogram.le_100_ms),
+        ("0.250", histogram.le_250_ms),
+        ("0.500", histogram.le_500_ms),
+        ("1.000", histogram.le_1000_ms),
+    ] {
+        cumulative += count;
+        out.push_str(&format!(
+            "boom_latency_histogram_seconds_bucket{{target=\"{target}\",le=\"{le}\"}} {cumulative}\n"
+        ));
+    }
+    out.push_str(&format!(
+        "boom_latency_histogram_seconds_bucket{{target=\"{target}\",le=\"+Inf\"}} {}\n",
+        summary.total_requests
+    ));
+    out.push_str(&format!(
+        "boom_latency_histogram_seconds_sum{{target=\"{target}\"}} {:.9}\n",
+        summary.latency.mean_ns as f64 * summary.total_requests as f64 / 1_000_000_000.0,
+    ));
+    out.push_str(&format!(
+        "boom_latency_histogram_seconds_count{{target=\"{target}\"}} {}\n",
+        summary.total_requests
+    ));
 }
 
 fn render_html(summary: &BenchSummary, errors: &[ErrorSample]) -> String {
@@ -304,15 +413,15 @@ code {{ font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; f
   <div class="badge">{method_count} methods benchmarked</div>
 </header>
 <section class="band">
-  <div class="card"><span>Total Requests</span><strong>{requests}</strong><small>{duration_ms} ms measured</small></div>
-  <div class="card"><span>Throughput</span><strong>{rps:.2}</strong><small>requests per second</small></div>
+  <div class="card"><span>Total Requests</span><strong>{requests}</strong><small>{offered} offered / {dropped} dropped</small></div>
+  <div class="card"><span>Throughput</span><strong>{rps:.2}</strong><small>{rate_detail}</small></div>
   <div class="card"><span>Success Rate</span><strong>{success_rate:.2}%</strong><small>{successes} successful</small></div>
   <div class="card"><span>Total Errors</span><strong>{error_total}</strong><small>rpc + transport + timeout</small></div>
-  <div class="card"><span>P95 Latency</span><strong>{p95} ms</strong><small>p50 {p50} ms</small></div>
-  <div class="card"><span>P99 Latency</span><strong>{p99} ms</strong><small>max {max_latency} ms</small></div>
+  <div class="card"><span>P95 Latency</span><strong>{p95}</strong><small>p50 {p50}</small></div>
+  <div class="card"><span>P99 Latency</span><strong>{p99}</strong><small>max {max_latency}</small></div>
 </section>
 <section class="triple">
-  <div class="panel"><h2>Run Health</h2><div class="score">{health_score:.0}</div><div class="scoreline"><div style="width:{health_score:.0}%"></div></div><div class="muted">Score combines success rate, latency, and transport failures.</div></div>
+  <div class="panel"><h2>Observed Reliability</h2><div class="score">{health_score:.1}%</div><div class="scoreline"><div style="width:{health_score:.0}%"></div></div><div class="muted">Observed success rate. Apply your own SLO for pass/fail decisions.</div></div>
   <div class="panel"><h2>Findings</h2>{findings}</div>
   <div class="panel"><h2>Hotspots</h2>{hotspots}</div>
 </section>
@@ -323,6 +432,10 @@ code {{ font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; f
 <section class="layout">
   <div class="panel"><h2>Latency By Method</h2>{latency_chart}</div>
   <div class="panel"><h2>Error Rate By Method</h2>{error_chart}</div>
+</section>
+<section class="panel" style="margin-bottom:16px;">
+  <h2>Run Timeline</h2>
+  {timeline}
 </section>
 <section class="panel" style="margin-bottom:16px;">
   <h2>Error Reasons</h2>
@@ -346,15 +459,17 @@ code {{ font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; f
         target = escape(&summary.target),
         method_count = method_count,
         requests = summary.total_requests,
-        duration_ms = summary.duration_ms,
+        offered = summary.offered_requests,
+        dropped = summary.dropped_requests,
         rps = summary.requests_per_second,
+        rate_detail = rate_detail(summary),
         success_rate = success_rate,
         successes = summary.successes,
         error_total = error_total,
-        p50 = summary.latency.p50_ms,
-        p95 = summary.latency.p95_ms,
-        p99 = summary.latency.p99_ms,
-        max_latency = summary.latency.max_ms,
+        p50 = format_latency(summary.latency.p50_ns, summary.latency.p50_ms),
+        p95 = format_latency(summary.latency.p95_ns, summary.latency.p95_ms),
+        p99 = format_latency(summary.latency.p99_ns, summary.latency.p99_ms),
+        max_latency = format_latency(summary.latency.max_ns, summary.latency.max_ms),
         health_score = health_score(summary),
         findings = findings(summary),
         hotspots = hotspots(summary),
@@ -362,6 +477,7 @@ code {{ font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; f
         volume_chart = bar_chart(summary, |m| m.requests as f64, "req", "#2f6fed", 10),
         latency_chart = grouped_latency_chart(summary),
         error_chart = bar_chart(summary, |m| percent(m.errors, m.requests), "%", "#c43f32", 10),
+        timeline = timeline_chart(summary),
         error_reasons = error_reasons,
         table_rows = table_rows,
         error_rows = error_rows,
@@ -378,7 +494,7 @@ fn method_table_row(method: &str, m: &MethodSummary, total_requests: u64) -> Str
         "pill bad"
     };
     format!(
-        "<tr><td><code>{}</code></td><td>{:.1}%</td><td>{}</td><td>{}</td><td>{}</td><td><span class=\"{}\">{:.1}%</span></td><td>{} ms</td><td>{} ms</td><td>{} ms</td></tr>",
+        "<tr><td><code>{}</code></td><td>{:.1}%</td><td>{}</td><td>{}</td><td>{}</td><td><span class=\"{}\">{:.1}%</span></td><td>{}</td><td>{}</td><td>{}</td></tr>",
         escape(method),
         percent(m.requests, total_requests),
         m.requests,
@@ -386,9 +502,9 @@ fn method_table_row(method: &str, m: &MethodSummary, total_requests: u64) -> Str
         m.errors,
         error_class,
         success,
-        m.p50_ms,
-        m.p95_ms,
-        m.p99_ms,
+        format_latency(m.p50_ns, m.p50_ms),
+        format_latency(m.p95_ns, m.p95_ms),
+        format_latency(m.p99_ns, m.p99_ms),
     )
 }
 
@@ -436,10 +552,10 @@ fn error_rows(errors: &[ErrorSample]) -> String {
         .take(100)
         .map(|error| {
             format!(
-                "<tr><td><code>{}</code></td><td>{}</td><td>{} ms</td><td style=\"text-align:left; white-space:normal;\"><code>{}</code></td></tr>",
+                "<tr><td><code>{}</code></td><td>{}</td><td>{}</td><td style=\"text-align:left; white-space:normal;\"><code>{}</code></td></tr>",
                 escape(&error.method),
                 escape(&error.kind),
-                error.latency_ms,
+                format_latency(error.latency_ns, error.latency_ms),
                 escape(&error.detail),
             )
         })
@@ -520,22 +636,27 @@ fn bar_chart(
 
 fn grouped_latency_chart(summary: &BenchSummary) -> String {
     let methods = slowest_methods(summary, 8);
-    let max = methods.iter().map(|(_, m)| m.p99_ms).max().unwrap_or(1).max(1) as f64;
+    let max = methods
+        .iter()
+        .map(|(_, metrics)| effective_ns(metrics.p99_ns, metrics.p99_ms))
+        .max()
+        .unwrap_or(1)
+        .max(1) as f64;
     let height = 54 + methods.len() as i32 * 38;
     let rows = methods
         .iter()
         .enumerate()
         .map(|(index, (method, m))| {
             let y = 38 + index as i32 * 38;
-            let p50 = (m.p50_ms as f64 / max * 230.0).max(1.0);
-            let p95 = (m.p95_ms as f64 / max * 230.0).max(1.0);
-            let p99 = (m.p99_ms as f64 / max * 230.0).max(1.0);
+            let p50 = (effective_ns(m.p50_ns, m.p50_ms) as f64 / max * 230.0).max(1.0);
+            let p95 = (effective_ns(m.p95_ns, m.p95_ms) as f64 / max * 230.0).max(1.0);
+            let p99 = (effective_ns(m.p99_ns, m.p99_ms) as f64 / max * 230.0).max(1.0);
             format!(
                 r##"<text x="0" y="{label_y}" class="label">{method}</text>
 <rect x="156" y="{p99_y}" width="{p99:.2}" height="8" rx="4" fill="#d85826"/>
 <rect x="156" y="{p95_y}" width="{p95:.2}" height="8" rx="4" fill="#f0a13a"/>
 <rect x="156" y="{p50_y}" width="{p50:.2}" height="8" rx="4" fill="#21855b"/>
-<text x="{value_x:.2}" y="{label_y}" class="muted">{p50v}/{p95v}/{p99v} ms</text>"##,
+<text x="{value_x:.2}" y="{label_y}" class="muted">{p50v}/{p95v}/{p99v}</text>"##,
                 label_y = y + 18,
                 method = trim_method(method, 25),
                 p99_y = y,
@@ -545,9 +666,9 @@ fn grouped_latency_chart(summary: &BenchSummary) -> String {
                 p95 = p95,
                 p99 = p99,
                 value_x = 164.0 + p99,
-                p50v = m.p50_ms,
-                p95v = m.p95_ms,
-                p99v = m.p99_ms,
+                p50v = format_latency(m.p50_ns, m.p50_ms),
+                p95v = format_latency(m.p95_ns, m.p95_ms),
+                p99v = format_latency(m.p99_ns, m.p99_ms),
             )
         })
         .collect::<Vec<_>>()
@@ -577,11 +698,60 @@ fn legend(items: &[(&str, u64, &str)]) -> String {
 }
 
 fn health_score(summary: &BenchSummary) -> f64 {
-    let success = percent(summary.successes, summary.total_requests);
-    let transport_penalty =
-        percent(summary.transport_errors + summary.timeouts, summary.total_requests) * 1.5;
-    let latency_penalty = (summary.latency.p95_ms as f64 / 100.0).min(25.0);
-    (success - transport_penalty - latency_penalty).clamp(0.0, 100.0)
+    percent(summary.successes, summary.total_requests)
+}
+
+fn timeline_chart(summary: &BenchSummary) -> String {
+    if summary.samples.is_empty() {
+        return "<div class=\"muted\">No per-second samples are available for this run.</div>"
+            .to_string();
+    }
+    let width = 920.0;
+    let height = 230.0;
+    let plot_height = 170.0;
+    let max_requests =
+        summary.samples.iter().map(|sample| sample.requests).max().unwrap_or(1).max(1);
+    let max_latency = summary
+        .samples
+        .iter()
+        .map(|sample| effective_ns(sample.p95_ns, sample.p95_ms))
+        .max()
+        .unwrap_or(1)
+        .max(1);
+    let count = summary.samples.len().max(1) as f64;
+    let bar_width = (width / count).max(1.0);
+    let bars = summary
+        .samples
+        .iter()
+        .enumerate()
+        .map(|(index, sample)| {
+            let x = index as f64 * bar_width;
+            let bar_height = sample.requests as f64 / max_requests as f64 * plot_height;
+            format!(
+                "<rect x=\"{x:.2}\" y=\"{y:.2}\" width=\"{bar_width:.2}\" height=\"{bar_height:.2}\" fill=\"#17365f\"/><title>second {}: {} requests</title>",
+                sample.second,
+                sample.requests,
+                y = plot_height - bar_height,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("");
+    let points = summary
+        .samples
+        .iter()
+        .enumerate()
+        .map(|(index, sample)| {
+            let x = (index as f64 + 0.5) * bar_width;
+            let value = effective_ns(sample.p95_ns, sample.p95_ms);
+            let y = plot_height - value as f64 / max_latency as f64 * plot_height;
+            format!("{x:.2},{y:.2}")
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!(
+        "<svg viewBox=\"0 0 {width} {height}\" role=\"img\" aria-label=\"requests and p95 latency over time\">{bars}<polyline points=\"{points}\" fill=\"none\" stroke=\"#5eead4\" stroke-width=\"3\"/><text x=\"0\" y=\"205\" class=\"muted\">blue bars: requests/sec · green line: p95 latency · max {}</text></svg>",
+        format_latency(max_latency, common::ns_to_ms(max_latency)),
+    )
 }
 
 fn findings(summary: &BenchSummary) -> String {
@@ -601,10 +771,26 @@ fn findings(summary: &BenchSummary) -> String {
     items.push(finding(
         "Latency",
         &format!(
-            "p50 {} ms, p95 {} ms, p99 {} ms.",
-            summary.latency.p50_ms, summary.latency.p95_ms, summary.latency.p99_ms
+            "p50 {}, p95 {}, p99 {}.",
+            format_latency(summary.latency.p50_ns, summary.latency.p50_ms),
+            format_latency(summary.latency.p95_ns, summary.latency.p95_ms),
+            format_latency(summary.latency.p99_ns, summary.latency.p99_ms),
         ),
     ));
+    if let Some(requested_rps) = summary.requested_rps {
+        items.push(finding(
+            "Load delivery",
+            &format!(
+                "{:.2}% of {:.2} requested RPS; {} scheduler drops.",
+                summary.achieved_rate_ratio.unwrap_or(0.0) * 100.0,
+                requested_rps,
+                summary.dropped_requests,
+            ),
+        ));
+    }
+    if !summary.skipped_methods.is_empty() {
+        items.push(finding("Skipped workload", &summary.skipped_methods.join(", ")));
+    }
     if summary.rpc_errors + summary.transport_errors + summary.timeouts == 0 {
         items.push(finding("Errors", "No RPC, transport, or timeout errors recorded."));
     } else {
@@ -632,7 +818,11 @@ fn hotspots(summary: &BenchSummary) -> String {
     let noisy = error_methods(summary, 4);
     let mut out = String::from("<div class=\"kv\">");
     for (method, m) in &slow {
-        out.push_str(&format!("<span>{}</span><span>p95 {} ms</span>", escape(method), m.p95_ms));
+        out.push_str(&format!(
+            "<span>{}</span><span>p95 {}</span>",
+            escape(method),
+            format_latency(m.p95_ns, m.p95_ms),
+        ));
     }
     for (method, m) in &noisy {
         out.push_str(&format!(
@@ -650,13 +840,20 @@ fn hotspots(summary: &BenchSummary) -> String {
 
 fn method_rows(summary: &BenchSummary) -> Vec<(&String, &MethodSummary)> {
     let mut methods = summary.methods.iter().collect::<Vec<_>>();
-    methods.sort_by_key(|(_, m)| (std::cmp::Reverse(m.p95_ms), std::cmp::Reverse(m.requests)));
+    methods.sort_by_key(|(_, metrics)| {
+        (
+            std::cmp::Reverse(effective_ns(metrics.p95_ns, metrics.p95_ms)),
+            std::cmp::Reverse(metrics.requests),
+        )
+    });
     methods
 }
 
 fn slowest_methods(summary: &BenchSummary, limit: usize) -> Vec<(&String, &MethodSummary)> {
     let mut methods = summary.methods.iter().filter(|(_, m)| m.requests > 0).collect::<Vec<_>>();
-    methods.sort_by_key(|(_, m)| std::cmp::Reverse(m.p95_ms));
+    methods.sort_by_key(|(_, metrics)| {
+        std::cmp::Reverse(effective_ns(metrics.p95_ns, metrics.p95_ms))
+    });
     methods.truncate(limit);
     methods
 }
@@ -685,8 +882,8 @@ fn percent(part: u64, total: u64) -> f64 {
 
 fn trim_method(method: &str, max_len: usize) -> String {
     let escaped = escape(method);
-    if escaped.len() > max_len {
-        format!("{}...", &escaped[..max_len.saturating_sub(3)])
+    if escaped.chars().count() > max_len {
+        format!("{}...", escaped.chars().take(max_len.saturating_sub(3)).collect::<String>())
     } else {
         escaped
     }
@@ -697,5 +894,39 @@ fn escape(input: &str) -> String {
 }
 
 fn label_value(input: &str) -> String {
-    input.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n")
+    input.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n").replace('\r', "\\r")
+}
+
+fn effective_ns(ns: u128, legacy_ms: u128) -> u128 {
+    if ns == 0 && legacy_ms > 0 {
+        legacy_ms * 1_000_000
+    } else {
+        ns
+    }
+}
+
+fn format_latency(ns: u128, legacy_ms: u128) -> String {
+    let ns = effective_ns(ns, legacy_ms);
+    if ns < 1_000 {
+        format!("{ns} ns")
+    } else if ns < 1_000_000 {
+        format!("{:.2} \u{00b5}s", ns as f64 / 1_000.0)
+    } else if ns < 1_000_000_000 {
+        format!("{:.2} ms", ns as f64 / 1_000_000.0)
+    } else {
+        format!("{:.2} s", ns as f64 / 1_000_000_000.0)
+    }
+}
+
+fn rate_detail(summary: &BenchSummary) -> String {
+    summary.requested_rps.map_or_else(
+        || "closed-loop requests per second".to_string(),
+        |requested| {
+            format!(
+                "target {:.2} · {:.1}% delivered",
+                requested,
+                summary.achieved_rate_ratio.unwrap_or(0.0) * 100.0,
+            )
+        },
+    )
 }

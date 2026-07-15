@@ -15,6 +15,10 @@ boom ws-bench <ws-rpc>
 boom compare <left-rpc> <right-rpc> [workload options]
 boom report --run <run-dir>
 boom metrics --run <run-dir>
+boom config-check --config <config.toml>
+boom serve-metrics --run <run-dir>
+boom gate --baseline <run-dir> --run <run-dir>
+boom scenario --config <config.toml> --scenario <name>
 boom engine --rpc <engine-rpc> --jwt <jwt-secret-or-file>
 boom engine-ssz-suite --base <engine-rest-base> --jwt <jwt-secret-or-file>
 boom engine-ssz --base <engine-rest-base> --jwt <jwt-secret-or-file> --endpoint <endpoint>
@@ -233,7 +237,7 @@ Important options:
 
 | Option | Purpose |
 |---|---|
-| `--duration <DURATION>` | Main measured duration. |
+| `--duration <DURATION>` | Main measured duration. Supports `ns`, `us`, `µs`, `ms`, `s`, `m`, `h`, or bare seconds. |
 | `--warmup <DURATION>` | Warmup phase before measurements. |
 | `--concurrency <N>` | Number of concurrent workers. |
 | `--timeout <DURATION>` | Per-request timeout. |
@@ -242,6 +246,12 @@ Important options:
 | `--ramp <START:END>` | Linear request-rate ramp over the run duration. |
 | `--out <DIR>` | Output directory. |
 | `--json` | Print machine-readable JSON summary to stdout. |
+| `--live-metrics <ADDR>` | Expose live `/metrics` and `/healthz` while the run is active. |
+| `--max-requests <N>` | Stop offering traffic after N logical requests. |
+| `--max-duration <DURATION>` | Cap measured duration even if `--duration` is larger. |
+| `--max-rps <N>` | Cap fixed or ramped request rates. |
+| `--allow-public` | Explicitly opt in to non-private/public endpoints. |
+| `--dry-run` | Print the validated plan without sending traffic. |
 | `--no-prompt` | Disable interactive report prompts. |
 
 ### Config File Mode
@@ -399,7 +409,7 @@ Important options:
 | Option | Purpose |
 |---|---|
 | `<WS>` | WebSocket JSON-RPC URL. |
-| `--duration <DURATION>` | Measured duration. |
+| `--duration <DURATION>` | Measured duration. Supports `ns`, `us`, `µs`, `ms`, `s`, `m`, `h`, or bare seconds. |
 | `--concurrency <N>` | Number of WebSocket workers. |
 | `--timeout <DURATION>` | Per-request timeout. |
 | `--method <METHOD>` | JSON-RPC method, default `eth_blockNumber`. |
@@ -414,6 +424,7 @@ Artifacts:
 | `run.json` | Structured benchmark summary. |
 | `summary.md` | Markdown summary. |
 | `openmetrics.prom` | OpenMetrics text for the run. |
+| `manifest.json` | WebSocket transport, timing, and completion metadata. |
 
 ## `boom report`
 
@@ -486,9 +497,68 @@ Metrics include:
 
 - `boom_requests_total`
 - `boom_requests_per_second`
-- `boom_latency_ms`
+- `boom_latency_seconds` and `boom_latency_histogram_seconds`
 - `boom_method_requests_total`
-- `boom_method_latency_ms`
+- `boom_method_latency_seconds`
+
+## `boom gate`
+
+Gate compares a completed run with a saved baseline and exits non-zero when the configured
+latency, error-rate, or throughput budgets are violated. This is intended for CI:
+
+```bash
+boom gate --baseline runs/baseline --run runs/candidate \
+  --max-p95-regression 10 \
+  --max-error-rate-delta 1 \
+  --min-throughput-ratio 0.95 \
+  --out runs/gate
+```
+
+The command writes `regression.json` and `regression.md` when `--out` is supplied.
+
+## `boom scenario`
+
+Scenario runs execute ordered JSON-RPC steps and can capture values from earlier responses.
+Captured values are referenced as `$name` or `$name.path` in later params:
+
+```bash
+boom scenario --config configs/examples/scenario.toml \
+  --scenario block_transactions --out runs/scenario
+```
+
+Each scenario writes `scenario.json` and `scenario.md` with per-step nanosecond latency.
+
+Safety controls apply to benchmark configs and CLI-generated workloads:
+
+- `max_requests` limits the total logical request budget.
+- `max_duration` caps measured duration.
+- `max_rps` caps fixed or ramped load.
+- `dry_run` validates and prints a plan without connecting to the endpoint.
+- Public/non-private endpoints require `--allow-public` or `bench.allow_public = true`.
+
+## `boom config-check`
+
+Validate a TOML benchmark configuration without sending any RPC requests:
+
+```bash
+boom config-check --config configs/examples/basic-eth.toml
+boom config-check --config configs/examples/basic-eth.toml --json
+```
+
+Validation checks duration, timeout, concurrency, batch size, rate settings, target
+selection, method names, and workload weight limits.
+
+## `boom serve-metrics`
+
+Serve a completed run as a Prometheus scrape endpoint for Grafana:
+
+```bash
+boom serve-metrics --run runs/heavy --listen 127.0.0.1:9464
+```
+
+Import `observability/grafana/boom-dashboard.json` into Grafana and use the sample
+Prometheus configuration in `observability/prometheus.yml`. The endpoint exposes
+`/metrics` and `/healthz` and stops cleanly on Ctrl-C.
 
 ## `boom engine`
 

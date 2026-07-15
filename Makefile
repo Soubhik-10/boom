@@ -4,6 +4,8 @@ ENGINE_RPC ?=
 JWT ?= ./jwt.hex
 OUT ?= runs/local-001
 CONFIG ?=
+BASELINE ?=
+RUN ?=
 GENERATED_CONFIG ?= runs/generated-basic-eth.toml
 DURATION ?= 30s
 CONCURRENCY ?= 64
@@ -35,7 +37,7 @@ else
 BENCH_ARGS := --config $(CONFIG) --out $(OUT)
 endif
 
-.PHONY: help ci lint fmt fmt-fix clippy clippy-fix test check docs build install run probe catalog metrics live ws-bench find-limit bench bench-all bench-heavy bench-rate bench-ramp bench-compare bench-basic engine report report-print report-open report-prompt gen-config engine-ssz-suite engine-ssz-capabilities engine-ssz-identity engine-ssz-bodies-range
+.PHONY: help ci lint fmt fmt-fix clippy clippy-fix test check docs build install run probe catalog metrics config-check gate scenario live ws-bench find-limit bench bench-all bench-heavy bench-rate bench-ramp bench-compare bench-basic engine report report-print report-open report-prompt gen-config engine-ssz-suite engine-ssz-capabilities engine-ssz-identity engine-ssz-bodies-range
 
 help:
 	@echo "boom targets:"
@@ -59,6 +61,9 @@ help:
 	@echo "  make report-open OUT=runs/heavy"
 	@echo "  make report-prompt OUT=runs/heavy"
 	@echo "  make metrics OUT=runs/heavy"
+	@echo "  make config-check CONFIG=configs/examples/basic-eth.toml"
+	@echo "  make gate BASELINE=runs/baseline RUN=runs/candidate"
+	@echo "  make scenario CONFIG=configs/examples/scenario.toml SCENARIO=block_transactions OUT=runs/scenario"
 	@echo "  make bench CONFIG=configs/examples/basic-eth.toml OUT=runs/local-001"
 	@echo "  make engine ENGINE_RPC=http://localhost:8551 JWT=./jwt.hex"
 	@echo "  make engine-ssz-suite ENGINE_RPC=http://localhost:8551 JWT=./jwt.hex"
@@ -108,6 +113,19 @@ catalog:
 
 metrics:
 	cargo run -q --locked -- metrics --run $(OUT) --print
+
+config-check:
+	@test -n "$(CONFIG)" || { echo "CONFIG required. Usage: make config-check CONFIG=configs/examples/basic-eth.toml"; exit 1; }
+	cargo run -q --locked -- config-check --config $(CONFIG)
+
+gate:
+	@test -n "$(BASELINE)" || { echo "BASELINE required. Usage: make gate BASELINE=runs/baseline RUN=runs/candidate"; exit 1; }
+	@test -n "$(RUN)" || { echo "RUN required. Usage: make gate BASELINE=runs/baseline RUN=runs/candidate"; exit 1; }
+	cargo run -q --locked -- gate --baseline $(BASELINE) --run $(RUN) --out $(OUT)/gate
+
+scenario:
+	@test -n "$(CONFIG)" || { echo "CONFIG required. Usage: make scenario CONFIG=configs/examples/scenario.toml SCENARIO=block_transactions"; exit 1; }
+	cargo run -q --locked -- scenario --config $(CONFIG) --scenario $(SCENARIO) --out $(OUT)
 
 live:
 	@test -n "$(RPC)" || { echo "RPC required. Usage: make live RPC=http://localhost:8545"; exit 1; }

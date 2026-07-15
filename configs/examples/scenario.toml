@@ -1,0 +1,23 @@
+[targets.local]
+rpc = "http://localhost:8545"
+label = "Local scenario target"
+
+[bench]
+timeout = "10s"
+
+[scenarios.block_transactions]
+iterations = 5
+
+[[scenarios.block_transactions.steps]]
+method = "eth_getBlockByNumber"
+params = ["latest", true]
+capture = { block_hash = "result.hash", first_tx = "result.transactions.0.hash" }
+
+[[scenarios.block_transactions.steps]]
+method = "eth_getBlockByHash"
+params = ["$block_hash", false]
+
+[[scenarios.block_transactions.steps]]
+method = "eth_getTransactionByHash"
+params = ["$first_tx"]
+optional = true

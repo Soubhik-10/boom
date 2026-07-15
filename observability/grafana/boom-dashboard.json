@@ -1,0 +1,93 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Observed RPS",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [{ "expr": "boom_requests_per_second", "legendFormat": "{{target}}", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "reqps", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 }
+    },
+    {
+      "type": "stat",
+      "title": "Success Rate",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [{ "expr": "100 * sum by (target) (boom_requests_total{status=\"success\"}) / sum by (target) (boom_requests_total)", "legendFormat": "{{target}}", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100, "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 }
+    },
+    {
+      "type": "stat",
+      "title": "P95 Latency",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [{ "expr": "boom_latency_seconds{quantile=\"0.95\"}", "legendFormat": "{{target}}", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 4 }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 }
+    },
+    {
+      "type": "stat",
+      "title": "Target Delivery",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [{ "expr": "100 * boom_achieved_rate_ratio", "legendFormat": "{{target}}", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "percent", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Latency Quantiles",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [{ "expr": "boom_latency_seconds", "legendFormat": "{{target}} p{{quantile}}", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 4 }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Completed Requests by Status",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [{ "expr": "boom_requests_total", "legendFormat": "{{target}} {{status}}", "refId": "A" }],
+      "fieldConfig": { "defaults": { "decimals": 0 }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 }
+    },
+    {
+      "type": "bargauge",
+      "title": "Method P95 Latency",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [{ "expr": "boom_method_latency_seconds{quantile=\"0.95\"}", "legendFormat": "{{method}}", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 4 }, "overrides": [] },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 13 }
+    },
+    {
+      "type": "table",
+      "title": "Scheduler Delivery",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "boom_offered_requests", "format": "table", "instant": true, "legendFormat": "offered", "refId": "A" },
+        { "expr": "boom_dropped_requests", "format": "table", "instant": true, "legendFormat": "dropped", "refId": "B" }
+      ],
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 13 }
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 39,
+  "tags": ["boom", "ethereum", "rpc"],
+  "templating": {
+    "list": [
+      {
+        "name": "DS_PROMETHEUS",
+        "type": "datasource",
+        "query": "prometheus",
+        "label": "Prometheus",
+        "current": {}
+      }
+    ]
+  },
+  "time": { "from": "now-15m", "to": "now" },
+  "timezone": "browser",
+  "title": "Boom RPC Benchmark",
+  "uid": "boom-rpc-benchmark",
+  "version": 1
+}

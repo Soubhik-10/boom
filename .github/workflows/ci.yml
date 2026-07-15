@@ -1,8 +1,12 @@
-﻿name: ci
+name: ci
 
 on:
   push:
   pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   lint:
@@ -18,7 +22,12 @@ jobs:
         run: cargo +nightly clippy --workspace --lib --examples --tests --benches --all-features --locked -- -D warnings
 
   test:
-    runs-on: ubuntu-latest
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -26,6 +35,14 @@ jobs:
         run: cargo check --workspace --all-targets --locked
       - name: Run tests
         run: cargo test --workspace --all-targets --locked
+      - name: Build release binary
+        run: cargo build --release --locked --bin boom
+      - name: Smoke test release binary (Unix)
+        if: runner.os != 'Windows'
+        run: ./target/release/boom --version
+      - name: Smoke test release binary (Windows)
+        if: runner.os == 'Windows'
+        run: .\target\release\boom.exe --version
 
   docs:
     runs-on: ubuntu-latest
@@ -34,3 +51,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
       - name: Rustdoc warnings denied
         run: RUSTDOCFLAGS="-D warnings" cargo +nightly doc --workspace --no-deps --locked
+
+  installers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Unix installer
+        run: bash -n install.sh
+      - name: Validate PowerShell installer
+        shell: pwsh
+        run: $null = [scriptblock]::Create((Get-Content -Raw install.ps1))

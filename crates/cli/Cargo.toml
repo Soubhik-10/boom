@@ -1,9 +1,13 @@
 ﻿[package]
-name = "cli"
+name = "boom"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+repository.workspace = true
+description = "Production-oriented Ethereum JSON-RPC benchmarking and comparison CLI"
+readme = "../../README.md"
+publish = false
 
 [[bin]]
 name = "boom"
@@ -17,6 +21,7 @@ common = { path = "../common" }
 compare = { path = "../compare" }
 discovery = { path = "../discovery" }
 futures.workspace = true
+hdrhistogram.workspace = true
 report = { path = "../report" }
 runner = { path = "../runner" }
 serde = { workspace = true }

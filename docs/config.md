@@ -40,7 +40,7 @@ boom bench --config configs/examples/mini-eth.toml --out runs/mini-eth
 
 | Section | Required | Purpose |
 |---|---:|---|
-| `[targets.<name>]` | Yes | Defines one named RPC/Engine target. `boom bench --config` uses the first target with an `rpc` URL. |
+| `[targets.<name>]` | Yes | Defines one named RPC/Engine target. `boom bench --config` requires exactly one `rpc` target unless `--target <name>` is supplied. |
 | `[bench]` | No | Defines duration, warmup, concurrency, timeout, batching, and rate controls. Defaults are used when omitted. |
 | `[json_rpc.<method>]` | No | Defines custom JSON-RPC methods, params, weights, and metadata. If omitted, Boom uses the default ETH workload. |
 
@@ -52,19 +52,41 @@ boom bench --config configs/examples/mini-eth.toml --out runs/mini-eth
 | `engine` | string | Engine API endpoint used by Engine-oriented workflows. |
 | `jwt` | string | Hex JWT secret or path to a JWT secret file. |
 | `label` | string | Human-readable target label. |
+| `headers` | table | Static HTTP headers for this target. Do not commit secrets. |
+| `header_env` | table | Header name to environment variable mapping for secrets. |
+| `jwt_env` | string | Environment variable containing a JWT secret or secret-file path. |
+
+For a paid provider, keep the endpoint and credentials outside the file when possible:
+
+```toml
+[targets.provider]
+rpc = "https://your-provider.example/v1/project"
+
+[targets.provider.header_env]
+x-api-key = "RPC_API_KEY"
+```
+
+Run with `RPC_API_KEY=... boom bench --config provider.toml ...` (PowerShell:
+`$env:RPC_API_KEY = "..."`). Boom supplies the header on every benchmark request; it does
+not create subscriptions, manage billing, or bypass provider rate limits.
 
 ## Bench Fields
 
 | Field | Type | Default | Purpose |
 |---|---|---:|---|
-| `duration` | duration string | `30s` | Measured benchmark duration. Supports `ms`, `s`, `m`, or bare seconds. |
+| `duration` | duration string | `30s` | Measured benchmark duration. Supports `ns`, `us`, `µs`, `ms`, `s`, `m`, `h`, or bare seconds. |
 | `warmup` | duration string | `0s` | Warmup period before measured samples are recorded. |
 | `concurrency` | integer | `64` | Number of async workers issuing requests. |
 | `timeout` | duration string | `10s` | Per-request timeout. |
 | `batch_size` | integer | `1` | Number of logical JSON-RPC calls per HTTP batch request. |
-| `seed` | integer | unset | Reserved for deterministic workload generation. |
+| `seed` | integer | unset | Deterministic workload-selection seed. |
 | `rps` | number | unset | Fixed logical request rate target. |
 | `ramp` | string | unset | Linear rate ramp, formatted as `START:END`, for example `100:1000`. |
+| `max_requests` | integer | unset | Hard logical-request budget for the measured phase. |
+| `max_duration` | duration string | unset | Hard duration cap; the effective duration is the smaller of `duration` and this value. |
+| `max_rps` | number | unset | Hard cap applied to fixed or ramped rates. |
+| `dry_run` | boolean | `false` | Validate and print the plan without sending traffic. |
+| `allow_public` | boolean | `false` | Explicitly opt in to non-private/public endpoints. |
 
 ## Method Fields
 
@@ -193,6 +215,36 @@ engine = "http://localhost:8551"
 jwt = "./jwt.hex"
 label = "Local execution and Engine APIs"
 ```
+
+## Scenario DSL
+
+Scenarios execute ordered steps and can carry values from one response into later params:
+
+```toml
+[scenarios.block_transactions]
+iterations = 5
+
+[[scenarios.block_transactions.steps]]
+method = "eth_getBlockByNumber"
+params = ["latest", true]
+capture = { first_tx = "result.transactions.0.hash" }
+
+[[scenarios.block_transactions.steps]]
+method = "eth_getTransactionByHash"
+params = ["$first_tx"]
+optional = true
+```
+
+Run it with:
+
+```bash
+boom scenario --config configs/examples/scenario.toml \
+  --scenario block_transactions --out runs/scenario
+```
+
+Capture paths use dot notation over the JSON-RPC response (`result.number`,
+`result.transactions.0.hash`). Missing captures fail the dependent step; mark a step
+`optional = true` when provider-specific methods should not stop the workflow.
 
 ## Review Checklist
 

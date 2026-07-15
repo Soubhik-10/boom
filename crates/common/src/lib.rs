@@ -3,16 +3,20 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, fs, path::Path, time::Duration};
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     pub targets: BTreeMap<String, TargetConfig>,
     #[serde(default)]
     pub bench: BenchConfig,
     #[serde(default)]
     pub json_rpc: BTreeMap<String, MethodConfig>,
+    #[serde(default)]
+    pub scenarios: BTreeMap<String, ScenarioConfig>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct TargetConfig {
     #[serde(default)]
     pub rpc: Option<String>,
@@ -22,9 +26,19 @@ pub struct TargetConfig {
     pub jwt: Option<String>,
     #[serde(default)]
     pub label: Option<String>,
+    /// Static HTTP headers. Prefer `header_env` for secrets.
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
+    /// Maps an HTTP header name to the environment variable containing its value.
+    #[serde(default)]
+    pub header_env: BTreeMap<String, String>,
+    /// Environment variable containing a JWT secret or JWT secret file path.
+    #[serde(default)]
+    pub jwt_env: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct BenchConfig {
     #[serde(default = "default_duration")]
     pub duration: String,
@@ -42,9 +56,25 @@ pub struct BenchConfig {
     pub rps: Option<f64>,
     #[serde(default)]
     pub ramp: Option<String>,
+    /// Hard upper bound on logical requests sent by a run.
+    #[serde(default)]
+    pub max_requests: Option<u64>,
+    /// Hard upper bound on measured duration, even if `duration` is larger.
+    #[serde(default)]
+    pub max_duration: Option<String>,
+    /// Hard cap applied to fixed and ramped request rates.
+    #[serde(default)]
+    pub max_rps: Option<f64>,
+    /// Validate and print the plan without sending traffic.
+    #[serde(default)]
+    pub dry_run: bool,
+    /// Explicit opt-in for benchmarking non-private/public endpoints.
+    #[serde(default)]
+    pub allow_public: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct MethodConfig {
     #[serde(default = "default_weight")]
     pub weight: usize,
@@ -54,6 +84,28 @@ pub struct MethodConfig {
     pub compare: Option<String>,
     #[serde(default)]
     pub readonly: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScenarioConfig {
+    #[serde(default = "default_scenario_iterations")]
+    pub iterations: usize,
+    pub steps: Vec<ScenarioStep>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScenarioStep {
+    pub method: String,
+    #[serde(default)]
+    pub params: Value,
+    /// Capture names mapped to dot paths in the JSON-RPC response, e.g. `result.number`.
+    #[serde(default)]
+    pub capture: BTreeMap<String, String>,
+    /// Continue the scenario if this step returns an RPC or transport error.
+    #[serde(default)]
+    pub optional: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -104,8 +156,34 @@ pub enum ProbeStatus {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct BenchSummary {
+    #[serde(default = "default_schema_version")]
+    pub schema_version: u32,
+    #[serde(default)]
+    pub boom_version: String,
     pub target: String,
     pub duration_ms: u128,
+    #[serde(default)]
+    pub duration_ns: u128,
+    #[serde(default)]
+    pub requested_duration_ns: u128,
+    #[serde(default)]
+    pub started_unix_ms: u128,
+    #[serde(default)]
+    pub requested_rps: Option<f64>,
+    #[serde(default)]
+    pub offered_requests: u64,
+    #[serde(default)]
+    pub dropped_requests: u64,
+    #[serde(default)]
+    pub achieved_rate_ratio: Option<f64>,
+    #[serde(default)]
+    pub concurrency: usize,
+    #[serde(default = "default_batch_size")]
+    pub batch_size: usize,
+    #[serde(default)]
+    pub seed: Option<u64>,
+    #[serde(default)]
+    pub skipped_methods: Vec<String>,
     pub total_requests: u64,
     pub successes: u64,
     pub rpc_errors: u64,
@@ -142,6 +220,12 @@ pub struct TimeSample {
     pub p50_ms: u128,
     pub p95_ms: u128,
     pub p99_ms: u128,
+    #[serde(default)]
+    pub p50_ns: u128,
+    #[serde(default)]
+    pub p95_ns: u128,
+    #[serde(default)]
+    pub p99_ns: u128,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
@@ -153,6 +237,14 @@ pub struct MethodSummary {
     pub p90_ms: u128,
     pub p95_ms: u128,
     pub p99_ms: u128,
+    #[serde(default)]
+    pub p50_ns: u128,
+    #[serde(default)]
+    pub p90_ns: u128,
+    #[serde(default)]
+    pub p95_ns: u128,
+    #[serde(default)]
+    pub p99_ns: u128,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
@@ -163,21 +255,148 @@ pub struct LatencySummary {
     pub p95_ms: u128,
     pub p99_ms: u128,
     pub max_ms: u128,
+    #[serde(default)]
+    pub min_ns: u128,
+    #[serde(default)]
+    pub p50_ns: u128,
+    #[serde(default)]
+    pub p90_ns: u128,
+    #[serde(default)]
+    pub p95_ns: u128,
+    #[serde(default)]
+    pub p99_ns: u128,
+    #[serde(default)]
+    pub max_ns: u128,
+    #[serde(default)]
+    pub mean_ns: u128,
 }
 
 pub fn load_config(path: impl AsRef<Path>) -> Result<Config> {
     let path = path.as_ref();
     let raw =
         fs::read_to_string(path).with_context(|| format!("reading config {}", path.display()))?;
-    toml::from_str(&raw).with_context(|| format!("parsing config {}", path.display()))
+    let config: Config =
+        toml::from_str(&raw).with_context(|| format!("parsing config {}", path.display()))?;
+    validate_config(&config)?;
+    Ok(config)
 }
 
 pub fn first_rpc_target(config: &Config) -> Result<(String, String)> {
-    config
+    rpc_target(config, None)
+}
+
+/// Resolves an explicit RPC target, or requires the config to contain exactly one RPC target.
+pub fn rpc_target(config: &Config, selected: Option<&str>) -> Result<(String, String)> {
+    if let Some(name) = selected {
+        let target = config.targets.get(name).ok_or_else(|| anyhow!("unknown target '{name}'"))?;
+        let rpc = target
+            .rpc
+            .clone()
+            .ok_or_else(|| anyhow!("target '{name}' does not define an rpc URL"))?;
+        return Ok((name.to_string(), rpc));
+    }
+
+    let candidates = config
         .targets
         .iter()
-        .find_map(|(name, target)| target.rpc.as_ref().map(|rpc| (name.clone(), rpc.clone())))
-        .ok_or_else(|| anyhow!("config does not define any target with an rpc URL"))
+        .filter_map(|(name, target)| target.rpc.as_ref().map(|rpc| (name.clone(), rpc.clone())))
+        .collect::<Vec<_>>();
+    match candidates.as_slice() {
+        [] => Err(anyhow!("config does not define any target with an rpc URL")),
+        [target] => Ok(target.clone()),
+        _ => Err(anyhow!(
+            "config defines multiple RPC targets; select one with --target ({})",
+            candidates.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>().join(", ")
+        )),
+    }
+}
+
+/// Rejects ambiguous or unsafe benchmark settings before any traffic is sent.
+pub fn validate_config(config: &Config) -> Result<()> {
+    anyhow::ensure!(!config.targets.is_empty(), "config must define at least one target");
+    let duration = parse_duration(&config.bench.duration)?;
+    let timeout = parse_duration(&config.bench.timeout)?;
+    anyhow::ensure!(!duration.is_zero(), "bench.duration must be greater than zero");
+    anyhow::ensure!(!timeout.is_zero(), "bench.timeout must be greater than zero");
+    anyhow::ensure!(config.bench.concurrency > 0, "bench.concurrency must be greater than zero");
+    anyhow::ensure!(
+        config.bench.concurrency <= 1_000_000,
+        "bench.concurrency is unreasonably large"
+    );
+    anyhow::ensure!(config.bench.batch_size > 0, "bench.batch_size must be greater than zero");
+    anyhow::ensure!(config.bench.batch_size <= 10_000, "bench.batch_size must be <= 10000");
+    anyhow::ensure!(
+        config.bench.rps.is_none() || config.bench.ramp.is_none(),
+        "bench.rps and bench.ramp are mutually exclusive"
+    );
+    if let Some(rps) = config.bench.rps {
+        anyhow::ensure!(
+            rps.is_finite() && rps > 0.0,
+            "bench.rps must be finite and greater than zero"
+        );
+    }
+    if let Some(ramp) = &config.bench.ramp {
+        let (start, end) = parse_ramp(ramp)?;
+        anyhow::ensure!(start > 0.0 && end > 0.0, "bench.ramp rates must be greater than zero");
+    }
+    if let Some(warmup) = &config.bench.warmup {
+        parse_duration(warmup)?;
+    }
+    if let Some(max_requests) = config.bench.max_requests {
+        anyhow::ensure!(max_requests > 0, "bench.max_requests must be greater than zero");
+    }
+    if let Some(max_duration) = &config.bench.max_duration {
+        let max_duration = parse_duration(max_duration)?;
+        anyhow::ensure!(!max_duration.is_zero(), "bench.max_duration must be greater than zero");
+    }
+    if let Some(max_rps) = config.bench.max_rps {
+        anyhow::ensure!(
+            max_rps.is_finite() && max_rps > 0.0,
+            "bench.max_rps must be finite and greater than zero"
+        );
+    }
+    for (method, method_config) in &config.json_rpc {
+        anyhow::ensure!(!method.trim().is_empty(), "JSON-RPC method name cannot be empty");
+        anyhow::ensure!(method_config.weight <= 1_000_000, "weight for '{method}' is too large");
+    }
+    for (name, scenario) in &config.scenarios {
+        anyhow::ensure!(!name.trim().is_empty(), "scenario name cannot be empty");
+        anyhow::ensure!(
+            scenario.iterations > 0,
+            "scenario '{name}' iterations must be greater than zero"
+        );
+        anyhow::ensure!(
+            !scenario.steps.is_empty(),
+            "scenario '{name}' must define at least one step"
+        );
+        for step in &scenario.steps {
+            anyhow::ensure!(
+                !step.method.trim().is_empty(),
+                "scenario '{name}' has an empty method name"
+            );
+            for (capture, path) in &step.capture {
+                anyhow::ensure!(
+                    !capture.trim().is_empty(),
+                    "scenario '{name}' has an empty capture name"
+                );
+                anyhow::ensure!(
+                    !path.trim().is_empty(),
+                    "scenario '{name}' has an empty capture path"
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+pub fn parse_ramp(input: &str) -> Result<(f64, f64)> {
+    let (start, end) = input
+        .split_once(':')
+        .ok_or_else(|| anyhow!("ramp must look like START:END, for example 100:1000"))?;
+    let start: f64 = start.parse()?;
+    let end: f64 = end.parse()?;
+    anyhow::ensure!(start.is_finite() && end.is_finite(), "ramp rates must be finite");
+    Ok((start, end))
 }
 
 pub fn methods_or_default(config: &Config) -> Vec<(String, Value, usize)> {
@@ -200,7 +419,15 @@ pub fn config_for_rpc(
     let mut targets = BTreeMap::new();
     targets.insert(
         "target".to_string(),
-        TargetConfig { rpc: Some(rpc), engine: None, jwt: None, label: None },
+        TargetConfig {
+            rpc: Some(rpc),
+            engine: None,
+            jwt: None,
+            label: None,
+            headers: BTreeMap::new(),
+            header_env: BTreeMap::new(),
+            jwt_env: None,
+        },
     );
 
     let mut json_rpc = BTreeMap::new();
@@ -209,7 +436,7 @@ pub fn config_for_rpc(
             .insert(method, MethodConfig { weight, params, compare: None, readonly: Some(true) });
     }
 
-    Config { targets, bench, json_rpc }
+    Config { targets, bench, json_rpc, scenarios: BTreeMap::new() }
 }
 
 pub fn workload_presets(
@@ -417,16 +644,26 @@ pub fn scenario_workload(name: &str) -> Result<Vec<(String, Value, usize)>> {
 }
 pub fn parse_duration(input: &str) -> Result<Duration> {
     let trimmed = input.trim();
-    if let Some(value) = trimmed.strip_suffix("ms") {
-        return Ok(Duration::from_millis(value.parse()?));
-    }
-    if let Some(value) = trimmed.strip_suffix('s') {
-        return Ok(Duration::from_secs(value.parse()?));
-    }
-    if let Some(value) = trimmed.strip_suffix('m') {
-        return Ok(Duration::from_secs(value.parse::<u64>()? * 60));
-    }
-    Ok(Duration::from_secs(trimmed.parse()?))
+    let (value, multiplier) = if let Some(value) = trimmed.strip_suffix("ms") {
+        (value, 1e-3)
+    } else if let Some(value) = trimmed.strip_suffix("us") {
+        (value, 1e-6)
+    } else if let Some(value) = trimmed.strip_suffix("µs") {
+        (value, 1e-6)
+    } else if let Some(value) = trimmed.strip_suffix("ns") {
+        (value, 1e-9)
+    } else if let Some(value) = trimmed.strip_suffix('s') {
+        (value, 1.0)
+    } else if let Some(value) = trimmed.strip_suffix('m') {
+        (value, 60.0)
+    } else if let Some(value) = trimmed.strip_suffix('h') {
+        (value, 3600.0)
+    } else {
+        (trimmed, 1.0)
+    };
+    let value: f64 = value.parse()?;
+    anyhow::ensure!(value.is_finite() && value >= 0.0, "duration must be finite and non-negative");
+    Duration::try_from_secs_f64(value * multiplier).map_err(Into::into)
 }
 
 pub fn summarize_latencies(latencies: &mut [u128]) -> LatencySummary {
@@ -434,13 +671,54 @@ pub fn summarize_latencies(latencies: &mut [u128]) -> LatencySummary {
         return LatencySummary::default();
     }
     latencies.sort_unstable();
-    LatencySummary {
+    let summary = LatencySummary {
         min_ms: latencies[0],
         p50_ms: percentile(latencies, 50.0),
         p90_ms: percentile(latencies, 90.0),
         p95_ms: percentile(latencies, 95.0),
         p99_ms: percentile(latencies, 99.0),
         max_ms: *latencies.last().unwrap_or(&0),
+        mean_ns: latencies.iter().sum::<u128>() * 1_000_000 / latencies.len() as u128,
+        ..LatencySummary::default()
+    };
+    LatencySummary {
+        min_ns: summary.min_ms * 1_000_000,
+        p50_ns: summary.p50_ms * 1_000_000,
+        p90_ns: summary.p90_ms * 1_000_000,
+        p95_ns: summary.p95_ms * 1_000_000,
+        p99_ns: summary.p99_ms * 1_000_000,
+        max_ns: summary.max_ms * 1_000_000,
+        ..summary
+    }
+}
+
+/// Summarizes nanosecond samples while retaining millisecond compatibility fields.
+pub fn summarize_latencies_ns(latencies: &mut [u128]) -> LatencySummary {
+    if latencies.is_empty() {
+        return LatencySummary::default();
+    }
+    latencies.sort_unstable();
+    let min_ns = latencies[0];
+    let p50_ns = percentile(latencies, 50.0);
+    let p90_ns = percentile(latencies, 90.0);
+    let p95_ns = percentile(latencies, 95.0);
+    let p99_ns = percentile(latencies, 99.0);
+    let max_ns = *latencies.last().unwrap_or(&0);
+    let mean_ns = latencies.iter().sum::<u128>() / latencies.len() as u128;
+    LatencySummary {
+        min_ms: ns_to_ms(min_ns),
+        p50_ms: ns_to_ms(p50_ns),
+        p90_ms: ns_to_ms(p90_ns),
+        p95_ms: ns_to_ms(p95_ns),
+        p99_ms: ns_to_ms(p99_ns),
+        max_ms: ns_to_ms(max_ns),
+        min_ns,
+        p50_ns,
+        p90_ns,
+        p95_ns,
+        p99_ns,
+        max_ns,
+        mean_ns,
     }
 }
 
@@ -460,6 +738,18 @@ pub fn latency_histogram(latencies: &[u128]) -> LatencyHistogram {
         }
     }
     histogram
+}
+
+pub fn latency_histogram_ns(latencies: &[u128]) -> LatencyHistogram {
+    latency_histogram(&latencies.iter().map(|value| ns_to_ms_ceil(*value)).collect::<Vec<_>>())
+}
+
+pub fn ns_to_ms(value: u128) -> u128 {
+    value / 1_000_000
+}
+
+pub fn ns_to_ms_ceil(value: u128) -> u128 {
+    value.saturating_add(999_999) / 1_000_000
 }
 fn percentile(sorted: &[u128], pct: f64) -> u128 {
     if sorted.is_empty() {
@@ -485,6 +775,14 @@ fn default_weight() -> usize {
     1
 }
 
+fn default_scenario_iterations() -> usize {
+    1
+}
+
+fn default_schema_version() -> u32 {
+    2
+}
+
 impl Default for BenchConfig {
     fn default() -> Self {
         Self {
@@ -496,6 +794,11 @@ impl Default for BenchConfig {
             seed: None,
             rps: None,
             ramp: None,
+            max_requests: None,
+            max_duration: None,
+            max_rps: None,
+            dry_run: false,
+            allow_public: false,
         }
     }
 }
@@ -507,6 +810,9 @@ mod tests {
     #[test]
     fn parses_duration_units() {
         assert_eq!(parse_duration("250ms").unwrap(), Duration::from_millis(250));
+        assert_eq!(parse_duration("1us").unwrap(), Duration::from_micros(1));
+        assert_eq!(parse_duration("1µs").unwrap(), Duration::from_micros(1));
+        assert_eq!(parse_duration("1ns").unwrap(), Duration::from_nanos(1));
         assert_eq!(parse_duration("3s").unwrap(), Duration::from_secs(3));
         assert_eq!(parse_duration("2m").unwrap(), Duration::from_secs(120));
         assert_eq!(parse_duration("7").unwrap(), Duration::from_secs(7));
