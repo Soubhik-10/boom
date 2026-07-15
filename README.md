@@ -134,6 +134,36 @@ Run a configured multi-step scenario:
 boom scenario --config configs/examples/scenario.toml --scenario block_transactions --out runs/scenario
 ```
 
+## Verified Foundry Anvil example
+
+The repository includes a dedicated local-node profile at
+[`configs/examples/anvil-rpc.toml`](configs/examples/anvil-rpc.toml). It exercises 21
+Anvil-safe methods, including block, transaction, account, call, fee, storage, log, and
+network RPCs with deterministic weighting, a two-second warmup, four-call HTTP batches,
+100 requested requests per second, and a 1,000-request safety budget.
+
+Run it against a fresh Anvil node:
+
+```bash
+anvil --host 127.0.0.1 --port 8545
+# Seed one transaction so the transaction-aware placeholders resolve.
+curl -s http://127.0.0.1:8545 \
+  -H 'content-type: application/json' \
+  --data '{"jsonrpc":"2.0","id":1,"method":"eth_sendTransaction","params":[{"from":"0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266","to":"0x70997970C51812dc3A010C7d01b50e0d17dc79C8","value":"0x1"}]}'
+boom bench --config configs/examples/anvil-rpc.toml --target local --out runs/anvil-rpc --no-prompt
+boom report --run runs/anvil-rpc --out runs/anvil-rpc --no-prompt
+```
+
+The verified smoke run completed all 1,000 requests successfully (zero RPC, transport,
+or timeout errors) at 100.00 requests/second. Aggregate latency was 2.39 ms p50,
+2.91 ms p95, and 3.30 ms p99 over 9.97 seconds. The chart below is a snapshot of that
+run; the nanosecond values remain in `run.json` for exact comparisons.
+
+![Verified Anvil RPC benchmark chart](docs/assets/anvil-rpc-benchmark.svg)
+
+*Figure: `runs/anvil-rpc` generated from the dedicated Anvil config, not from a client-specific
+or remote-node run.*
+
 Probe a full method catalog:
 
 ```bash

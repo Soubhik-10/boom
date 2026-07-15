@@ -1,0 +1,119 @@
+[targets.local]
+rpc = "http://127.0.0.1:8545"
+label = "Foundry Anvil local node"
+
+[bench]
+duration = "10s"
+warmup = "2s"
+concurrency = 8
+timeout = "5s"
+batch_size = 4
+seed = 42
+rps = 100
+max_requests = 1000
+max_duration = "12s"
+
+[json_rpc.web3_clientVersion]
+weight = 1
+params = []
+readonly = true
+
+[json_rpc.net_version]
+weight = 1
+params = []
+readonly = true
+
+[json_rpc.eth_chainId]
+weight = 3
+params = []
+readonly = true
+
+[json_rpc.eth_blockNumber]
+weight = 6
+params = []
+readonly = true
+
+[json_rpc.eth_syncing]
+weight = 1
+params = []
+readonly = true
+
+[json_rpc.eth_gasPrice]
+weight = 3
+params = []
+readonly = true
+
+[json_rpc.eth_maxPriorityFeePerGas]
+weight = 2
+params = []
+readonly = true
+
+[json_rpc.eth_feeHistory]
+weight = 2
+params = [4, "latest", [25, 50, 75]]
+readonly = true
+
+[json_rpc.eth_getBlockByNumber]
+weight = 8
+params = ["$latest_block", false]
+readonly = true
+
+[json_rpc.eth_getBlockByHash]
+weight = 5
+params = ["$block_hash", false]
+readonly = true
+
+[json_rpc.eth_getBlockTransactionCountByNumber]
+weight = 3
+params = ["$latest_block"]
+readonly = true
+
+[json_rpc.eth_getBlockTransactionCountByHash]
+weight = 3
+params = ["$block_hash"]
+readonly = true
+
+[json_rpc.eth_getTransactionByHash]
+weight = 6
+params = ["$tx_hash"]
+readonly = true
+
+[json_rpc.eth_getTransactionReceipt]
+weight = 6
+params = ["$tx_hash"]
+readonly = true
+
+[json_rpc.eth_getBalance]
+weight = 6
+params = ["$address", "latest"]
+readonly = true
+
+[json_rpc.eth_getTransactionCount]
+weight = 4
+params = ["$address", "latest"]
+readonly = true
+
+[json_rpc.eth_getCode]
+weight = 3
+params = ["$address", "latest"]
+readonly = true
+
+[json_rpc.eth_getStorageAt]
+weight = 2
+params = ["$address", "0x0", "latest"]
+readonly = true
+
+[json_rpc.eth_call]
+weight = 5
+params = [{ to = "$call_to", data = "0x" }, "latest"]
+readonly = true
+
+[json_rpc.eth_estimateGas]
+weight = 3
+params = [{ to = "$call_to", data = "0x" }]
+readonly = true
+
+[json_rpc.eth_getLogs]
+weight = 2
+params = [{ fromBlock = "$latest_block", toBlock = "$latest_block" }]
+readonly = true
