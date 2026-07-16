@@ -156,6 +156,10 @@ jobs:
     if: needs.prepare.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'main' }}
+          fetch-depth: 1
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -174,11 +178,11 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "${RELEASE_TAG}" == "nightly" ]]; then
-            if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
-              gh release upload "${RELEASE_TAG}" dist/* --clobber
+            if gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+              gh release upload "${RELEASE_TAG}" dist/* --clobber --repo "${GITHUB_REPOSITORY}"
             else
-              gh release create "${RELEASE_TAG}" dist/* --prerelease --generate-notes --title "Boom nightly"
+              gh release create "${RELEASE_TAG}" dist/* --prerelease --generate-notes --title "Boom nightly" --repo "${GITHUB_REPOSITORY}"
             fi
           else
-            gh release create "${RELEASE_TAG}" dist/* --verify-tag --generate-notes --title "${RELEASE_TAG}"
+            gh release create "${RELEASE_TAG}" dist/* --verify-tag --generate-notes --title "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}"
           fi
